@@ -28,10 +28,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
@@ -64,7 +64,7 @@ jobs:
             if (!Array.isArray(catalog.entries) || catalog.entries.length === 0) throw new Error("catalog has no entries");
             const listed = new Set(root.entries.map((e) => e.path));
             for (const e of catalog.entries) {
-              for (const p of [e.path, e.thumbnail].filter(Boolean)) {
+              for (const p of [e.path, e.thumbnail, e.thumbnailDark].filter(Boolean)) {
                 if (!fs.existsSync("dist/workbook-templates/" + p)) throw new Error("missing file " + p);
                 if (!listed.has("workbook-templates/" + p)) throw new Error("root listing is missing " + p);
               }
@@ -84,14 +84,14 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: main
           # Full history and tags, so the change check can diff against the last release.
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'

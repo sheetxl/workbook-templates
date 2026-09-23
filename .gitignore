@@ -8,6 +8,9 @@ dist/
 .thumbnails/
 *.tsbuildinfo
 
+# Office lock files, present while a workbook is open
+~$*
+
 # OS generated files
 .DS_Store
 Thumbs.db

@@ -1,12 +1,14 @@
 /**
- * Renders a thumbnail for every template into `.thumbnails/<category>/<name>.webp`, which
- * `config/build.ts` then publishes beside the workbook.
+ * Renders two thumbnails for every template, light and dark, into
+ * `.thumbnails/<category>/<name>.webp` and `<name>.dark.webp`, which `config/build.ts` then
+ * publishes beside the workbook.
  *
  *   npm run thumbnails [-- <filter>]
  *
  * Each template is opened by `render/` (the pinned @sheetxl/studio-mui) in headless Chromium,
- * photographed once the grid has painted and its fonts have loaded, and scaled down to webp. A
- * hand-made `templates/<category>/<name>.png|.webp` wins over the rendered one, so it is skipped.
+ * photographed once the grid has painted and its fonts have loaded, and scaled down to webp. The
+ * dark one is the dark app with the dark grid on. A hand-made `templates/<category>/<name>.png|.webp`
+ * (or `<name>.dark.png|.webp`) wins over the rendered one for that scheme, so it is skipped.
  *
  * Needs a Chromium for Playwright: `npx playwright install chromium` (CI adds `--with-deps`).
  */
@@ -24,31 +26,52 @@ const RENDER_CONFIG = path.resolve("render/vite.config.ts");
 /** The rendered viewport, in CSS pixels. */
 const VIEWPORT = { width: 560, height: 350 };
 const SCALE = 2;
-/** The published thumbnail, in pixels. Same 8:5 shape as the viewport. */
+/** The grid's cell area: every pane, frozen ones included, and none of the headers. */
+const CELLS_SELECTOR = ".sheetxl-sheet-primary";
+/**
+ * What the grid draws around the cells inside its cell area, in CSS pixels, measured on the pinned
+ * studio: a 3px header-colored strip on the left, a 1px line on top and 2px on the right. Not
+ * photographed.
+ */
+const CELLS_INSET = { left: 3, top: 1, right: 2, bottom: 0 };
+/** The published thumbnail, in pixels. Cropped from the top left of the cell area to 8:5. */
 const THUMBNAIL = { width: 480, height: 300 };
 const LOAD_TIMEOUT = 60_000;
 
 const HAND_MADE = [".png", ".webp"];
 
-async function listTemplates(filter?: string): Promise<string[]> {
-  const found: string[] = [];
+/** Each scheme's file-name suffix, before the extension. */
+const SCHEMES = { light: "", dark: ".dark" } as const;
+type Scheme = keyof typeof SCHEMES;
+
+interface Job {
+  rel: string;
+  scheme: Scheme;
+}
+
+async function listJobs(filter?: string): Promise<Job[]> {
+  const found: Job[] = [];
   for (const dir of await fs.readdir(SRC, { withFileTypes: true })) {
     if (!dir.isDirectory() || dir.name.startsWith(".")) continue;
     const names = new Set(await fs.readdir(path.join(SRC, dir.name)));
     for (const name of names) {
-      if (!name.toLowerCase().endsWith(".xlsx")) continue;
+      // `~$<name>.xlsx` is the lock file Excel keeps beside a workbook it has open.
+      if (!name.toLowerCase().endsWith(".xlsx") || name.startsWith("~$")) continue;
       const base = name.slice(0, -".xlsx".length);
-      if (HAND_MADE.some((ext) => names.has(base + ext))) continue;
       const rel = `${dir.name}/${name}`;
-      if (!filter || rel.includes(filter)) found.push(rel);
+      if (filter && !rel.includes(filter)) continue;
+      for (const [scheme, suffix] of Object.entries(SCHEMES) as [Scheme, string][]) {
+        if (HAND_MADE.some((ext) => names.has(base + suffix + ext))) continue;
+        found.push({ rel, scheme });
+      }
     }
   }
-  return found.sort();
+  return found.sort((a, b) => a.rel.localeCompare(b.rel) || a.scheme.localeCompare(b.scheme));
 }
 
 async function main(): Promise<void> {
-  const templates = await listTemplates(process.argv[2]);
-  if (templates.length === 0) {
+  const jobs = await listJobs(process.argv[2]);
+  if (jobs.length === 0) {
     console.log("No templates need a rendered thumbnail.");
     return;
   }
@@ -62,12 +85,13 @@ async function main(): Promise<void> {
   const failures: string[] = [];
   try {
     const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: SCALE });
-    for (const rel of templates) {
+    for (const { rel, scheme } of jobs) {
+      const label = `${rel} (${scheme})`;
       const page = await context.newPage();
       const errors: string[] = [];
       page.on("pageerror", (e) => errors.push(e.message));
       try {
-        await page.goto(`${origin}?src=${encodeURIComponent(rel)}`);
+        await page.goto(`${origin}?src=${encodeURIComponent(rel)}&scheme=${scheme}`);
         await page.waitForFunction(() => window.__thumbnail !== undefined, undefined, { timeout: LOAD_TIMEOUT });
         const outcome = await page.evaluate(() => window.__thumbnail);
         if (outcome !== "ready") throw new Error(outcome?.error ?? "did not load");
@@ -75,16 +99,26 @@ async function main(): Promise<void> {
           await document.fonts.ready;
           await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
         });
-        const png = await page.screenshot({ type: "png" });
+        const cells = await page.locator(CELLS_SELECTOR).first().boundingBox();
+        if (!cells) throw new Error(`no ${CELLS_SELECTOR} on the page`);
+        const png = await page.screenshot({
+          type: "png",
+          clip: {
+            x: cells.x + CELLS_INSET.left,
+            y: cells.y + CELLS_INSET.top,
+            width: cells.width - CELLS_INSET.left - CELLS_INSET.right,
+            height: cells.height - CELLS_INSET.top - CELLS_INSET.bottom,
+          },
+        });
         const webp = await sharp(png).resize(THUMBNAIL.width, THUMBNAIL.height, { fit: "cover", position: "left top" }).webp({ quality: 82 }).toBuffer();
-        const out = path.join(OUT, rel.replace(/\.xlsx$/i, ".webp"));
+        const out = path.join(OUT, rel.replace(/\.xlsx$/i, `${SCHEMES[scheme]}.webp`));
         await fs.mkdir(path.dirname(out), { recursive: true });
         await fs.writeFile(out, webp);
-        console.log(`  ok  ${rel}  ${(webp.length / 1024).toFixed(1)} KB`);
+        console.log(`  ok  ${label}  ${(webp.length / 1024).toFixed(1)} KB`);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        failures.push(`${rel}: ${message}${errors.length ? ` (${errors.join("; ")})` : ""}`);
-        console.log(`FAIL  ${rel}  ${message}`);
+        failures.push(`${label}: ${message}${errors.length ? ` (${errors.join("; ")})` : ""}`);
+        console.log(`FAIL  ${label}  ${message}`);
       } finally {
         await page.close();
       }
@@ -99,7 +133,7 @@ async function main(): Promise<void> {
     for (const f of failures) console.error(`  - ${f}`);
     process.exit(1);
   }
-  console.log(`\nRendered ${templates.length} thumbnail(s) into .thumbnails/`);
+  console.log(`\nRendered ${jobs.length} thumbnail(s) into .thumbnails/`);
 }
 
 declare global {

@@ -3,7 +3,8 @@
  *
  *   templates/<category>/<name>.xlsx           a template; its title is the file name, title-cased
  *   templates/<category>/<name>.webp|.png      optional hand-made thumbnail, copied through
- *   .thumbnails/<category>/<name>.webp          the rendered thumbnail (`npm run thumbnails`), used
+ *   templates/<category>/<name>.dark.webp|.png optional hand-made dark thumbnail
+ *   .thumbnails/<category>/<name>[.dark].webp   the rendered thumbnails (`npm run thumbnails`), used
  *                                               when there is no hand-made one
  *   templates/<category>/_category.json        optional: { title?, description?, order?, icon? }
  *
@@ -13,6 +14,7 @@
  *   dist/workbook-templates/contents.json           the catalog
  *   dist/workbook-templates/<category>/<name>.xlsx
  *   dist/workbook-templates/<category>/<name>.webp|.png
+ *   dist/workbook-templates/<category>/<name>.dark.webp|.png
  *
  * Any problem fails the build with every problem listed, not just the first.
  */
@@ -29,6 +31,8 @@ const PACKAGE = "workbook-templates";
 const SCHEMA = 1;
 const MAX_BYTES = 2 * 1024 * 1024;
 const THUMBNAIL_EXTENSIONS = [".webp", ".png"];
+/** The file-name suffix of a dark thumbnail, before the extension. */
+const DARK_SUFFIX = ".dark";
 
 const SRC = path.resolve("templates");
 const RENDERED = path.resolve(".thumbnails");
@@ -74,6 +78,8 @@ interface Entry {
   category: string;
   title: string;
   thumbnail?: string;
+  /** The thumbnail on the dark grid. */
+  thumbnailDark?: string;
 }
 
 const problems: string[] = [];
@@ -371,7 +377,8 @@ async function build(): Promise<void> {
     let count = 0;
     for (const f of files) {
       const rel = `templates/${id}/${f.name}`;
-      if (f.name.startsWith(".")) continue;
+      // Dot files, and the `~$<name>.xlsx` lock file Excel keeps beside a workbook it has open.
+      if (f.name.startsWith(".") || f.name.startsWith("~$")) continue;
       if (f.isDirectory()) {
         fail(rel, "nested folders are not supported; one category level only");
         continue;
@@ -380,7 +387,8 @@ async function build(): Promise<void> {
       const base = f.name.slice(0, f.name.length - ext.length);
       if (f.name === "_category.json") continue;
       if (THUMBNAIL_EXTENSIONS.includes(ext)) {
-        if (!names.has(`${base}.xlsx`)) fail(rel, `thumbnail has no matching ${base}.xlsx`);
+        const owner = base.endsWith(DARK_SUFFIX) ? base.slice(0, -DARK_SUFFIX.length) : base;
+        if (!names.has(`${owner}.xlsx`)) fail(rel, `thumbnail has no matching ${owner}.xlsx`);
         continue;
       }
       if (ext !== ".xlsx") {
@@ -398,14 +406,16 @@ async function build(): Promise<void> {
         category: id,
         title: toName(base),
       };
-      const thumb = THUMBNAIL_EXTENSIONS.map((e) => `${base}${e}`).find((n) => names.has(n));
-      const rendered = path.join(RENDERED, id, `${base}.webp`);
-      if (thumb) {
-        entry.thumbnail = `${id}/${thumb}`;
-        copies.push({ from: path.join(catDir, thumb), to: path.join(OUT, id, thumb) });
-      } else if (await exists(rendered)) {
-        entry.thumbnail = `${id}/${base}.webp`;
-        copies.push({ from: rendered, to: path.join(OUT, id, `${base}.webp`) });
+      for (const [key, suffix] of [["thumbnail", ""], ["thumbnailDark", DARK_SUFFIX]] as const) {
+        const handMade = THUMBNAIL_EXTENSIONS.map((e) => `${base}${suffix}${e}`).find((n) => names.has(n));
+        const rendered = path.join(RENDERED, id, `${base}${suffix}.webp`);
+        if (handMade) {
+          entry[key] = `${id}/${handMade}`;
+          copies.push({ from: path.join(catDir, handMade), to: path.join(OUT, id, handMade) });
+        } else if (await exists(rendered)) {
+          entry[key] = `${id}/${base}${suffix}.webp`;
+          copies.push({ from: rendered, to: path.join(OUT, id, `${base}${suffix}.webp`) });
+        }
       }
       copies.push({ from: path.join(catDir, f.name), to: path.join(OUT, id, f.name) });
       entries.push(entry);

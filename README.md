@@ -28,10 +28,12 @@ validates the workbook, builds the index and publishes it.
 - **The folder is the category.** Use an existing folder, or create a new one. There is one level
   only; an `.xlsx` directly in `templates/` fails the build.
 - **Thumbnails come from CI.** You do not need to make one. CI opens each template in the pinned
-  SheetXL studio (`render/`) and photographs its first screen. A hand-made `<name>.png` beside the
-  template is used instead, for a template whose first screen is not its best.
+  SheetXL studio (`render/`) and photographs its first screen twice: once light, and once dark with
+  the dark grid on. The headers and the selection are left out. A hand-made `<name>.png` (or
+  `<name>.dark.png`) beside the template is used instead, for a template whose first screen is not
+  its best.
 
-To check a template before you push, run `npm install` and `npm run build`. To see its thumbnail,
+To check a template before you push, run `npm install` and `npm run build`. To see its thumbnails,
 run `npx playwright install chromium` once, then `npm run thumbnails` before the build; the images
 land in `.thumbnails/`.
 
@@ -46,7 +48,8 @@ templates/
     _category.json        optional: { "title", "description", "order", "icon" }
     <name>.xlsx           a template
     <name>.png            optional hand-made thumbnail
-config/thumbnails.ts      renders .thumbnails/<category>/<name>.webp for each template
+    <name>.dark.png       optional hand-made dark thumbnail
+config/thumbnails.ts      renders .thumbnails/<category>/<name>[.dark].webp for each template
 config/build.ts           validates every template, then writes dist/
 render/                   the page that renders one template for its thumbnail
 ```
@@ -62,6 +65,7 @@ dist/contents.json                                root listing of every file and
 dist/workbook-templates/contents.json             the catalog
 dist/workbook-templates/<category>/<name>.xlsx
 dist/workbook-templates/<category>/<name>.webp    the rendered thumbnail, or a hand-made .png
+dist/workbook-templates/<category>/<name>.dark.webp   the same on the dark grid
 ```
 
 The catalog looks like this. Entry paths are relative to `dist/workbook-templates/`.
@@ -75,7 +79,10 @@ The catalog looks like this. Entry paths are relative to `dist/workbook-template
     "categories": [{ "id": "finance", "title": "Finance", "description": "..." }]
   },
   "entries": [
-    { "path": "finance/loan-calculator.xlsx", "category": "finance", "title": "Loan Calculator" }
+    {
+      "path": "finance/loan-calculator.xlsx", "category": "finance", "title": "Loan Calculator",
+      "thumbnail": "finance/loan-calculator.webp", "thumbnailDark": "finance/loan-calculator.dark.webp"
+    }
   ]
 }
 ```
