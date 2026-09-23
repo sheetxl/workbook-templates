@@ -77,6 +77,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # npm trusted publishing (OIDC); no npm token secret.
+      id-token: write
 
     steps:
       - name: Checkout code
@@ -142,27 +144,29 @@ jobs:
             echo "Bumping version from $CURRENT_VERSION to $NEW_VERSION"
           fi
 
+      # The version is written locally, published, and only then committed and tagged, so a failed
+      # publish leaves no tag behind and the next run retries the same version.
       - name: Update version
         if: steps.version_check.outputs.should_publish == 'true' && steps.version_check.outputs.new_version != steps.current_version.outputs.version
-        run: |
-          npm version ${{ steps.version_check.outputs.new_version }} --no-git-tag-version
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add package.json package-lock.json
-          git commit -m "Bump version to ${{ steps.version_check.outputs.new_version }} [skip ci]"
-          git push
-
-      - name: Create release tag
-        if: steps.version_check.outputs.should_publish == 'true'
-        run: |
-          git tag "v${{ steps.version_check.outputs.new_version }}"
-          git push origin "v${{ steps.version_check.outputs.new_version }}"
+        run: npm version ${{ steps.version_check.outputs.new_version }} --no-git-tag-version
 
       - name: Publish to npm
         if: steps.version_check.outputs.should_publish == 'true'
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Commit version and tag release
+        if: steps.version_check.outputs.should_publish == 'true'
+        run: |
+          VERSION="${{ steps.version_check.outputs.new_version }}"
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          if ! git diff --quiet -- package.json package-lock.json; then
+            git add package.json package-lock.json
+            git commit -m "Bump version to $VERSION [skip ci]"
+            git push
+          fi
+          git tag "v$VERSION"
+          git push origin "v$VERSION"
 
       - name: Create GitHub Release
         if: steps.version_check.outputs.should_publish == 'true'
