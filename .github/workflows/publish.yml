@@ -1,0 +1,183 @@
+name: Build and Publish Templates
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'templates/**'
+      - 'config/**'
+      - 'render/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/publish.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'templates/**'
+      - 'config/**'
+      - 'render/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/publish.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Render thumbnails
+        run: npm run thumbnails
+
+      - name: Validate and build catalog
+        run: npm run build
+
+      - name: Validate generated files
+        run: |
+          for f in dist/contents.json dist/workbook-templates/contents.json; do
+            if [ ! -f "$f" ]; then
+              echo "Error: $f was not generated"
+              exit 1
+            fi
+          done
+          node -e '
+            const fs = require("fs");
+            const catalog = JSON.parse(fs.readFileSync("dist/workbook-templates/contents.json", "utf-8"));
+            const root = JSON.parse(fs.readFileSync("dist/contents.json", "utf-8"));
+            if (catalog.kind !== "templates" || catalog.package !== "workbook-templates") throw new Error("catalog header is wrong");
+            if (!Array.isArray(catalog.entries) || catalog.entries.length === 0) throw new Error("catalog has no entries");
+            const listed = new Set(root.entries.map((e) => e.path));
+            for (const e of catalog.entries) {
+              for (const p of [e.path, e.thumbnail].filter(Boolean)) {
+                if (!fs.existsSync("dist/workbook-templates/" + p)) throw new Error("missing file " + p);
+                if (!listed.has("workbook-templates/" + p)) throw new Error("root listing is missing " + p);
+              }
+            }
+            console.log("Catalog has " + catalog.entries.length + " templates in " + catalog.meta.categories.length + " categories");
+          '
+          echo "Generated files validated"
+
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          # Full history and tags, so the change check can diff against the last release.
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Render thumbnails
+        run: npm run thumbnails
+
+      - name: Validate and build catalog
+        run: npm run build
+
+      - name: Get current version
+        id: current_version
+        run: echo "version=$(npm pkg get version | tr -d '"')" >> $GITHUB_OUTPUT
+
+      - name: Check if version should be bumped
+        id: version_check
+        run: |
+          CURRENT_VERSION="${{ steps.current_version.outputs.version }}"
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          echo "Last tag: ${LAST_TAG:-<none>}"
+
+          if [[ -z "$LAST_TAG" ]]; then
+            # First release publishes the version in package.json as-is.
+            echo "No release yet"
+            echo "should_publish=true" >> $GITHUB_OUTPUT
+            echo "new_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          if [[ "${{ github.event.head_commit.message }}" == *"[publish]"* ]]; then
+            echo "Force publish requested in commit message"
+            SHOULD_PUBLISH=true
+          elif ! git diff --quiet "$LAST_TAG" HEAD -- templates/ config/; then
+            echo "Template changes detected since $LAST_TAG"
+            SHOULD_PUBLISH=true
+          else
+            echo "No template changes since $LAST_TAG"
+            SHOULD_PUBLISH=false
+          fi
+          echo "should_publish=$SHOULD_PUBLISH" >> $GITHUB_OUTPUT
+
+          if [[ "$SHOULD_PUBLISH" == "true" ]]; then
+            # Auto-increment patch version
+            NEW_VERSION=$(echo $CURRENT_VERSION | awk -F. '{$NF = $NF + 1;} 1' | sed 's/ /./g')
+            echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+            echo "Bumping version from $CURRENT_VERSION to $NEW_VERSION"
+          fi
+
+      - name: Update version
+        if: steps.version_check.outputs.should_publish == 'true' && steps.version_check.outputs.new_version != steps.current_version.outputs.version
+        run: |
+          npm version ${{ steps.version_check.outputs.new_version }} --no-git-tag-version
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add package.json package-lock.json
+          git commit -m "Bump version to ${{ steps.version_check.outputs.new_version }} [skip ci]"
+          git push
+
+      - name: Create release tag
+        if: steps.version_check.outputs.should_publish == 'true'
+        run: |
+          git tag "v${{ steps.version_check.outputs.new_version }}"
+          git push origin "v${{ steps.version_check.outputs.new_version }}"
+
+      - name: Publish to npm
+        if: steps.version_check.outputs.should_publish == 'true'
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release
+        if: steps.version_check.outputs.should_publish == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version_check.outputs.new_version }}"
+          gh release create "v$VERSION" \
+            --title "Release v$VERSION" \
+            --notes "Updated SheetXL workbook templates.
+
+          Catalog: https://unpkg.com/@sheetxl/workbook-templates@$VERSION/dist/workbook-templates/contents.json
+
+          \`\`\`bash
+          npm install @sheetxl/workbook-templates@$VERSION
+          \`\`\`
+
+          See the [commit history](https://github.com/sheetxl/workbook-templates/commits/v$VERSION) for details."

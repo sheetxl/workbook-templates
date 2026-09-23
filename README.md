@@ -1,1 +1,112 @@
-"# workbook-templates" 
+# Workbook Templates
+
+![SheetXL](https://www.sheetxl.com/logo-text.svg)
+
+[![License: CC0-1.0](https://img.shields.io/badge/license-CC0--1.0-blue.svg)](LICENSE)
+[![Discord](https://img.shields.io/discord/1141404921246257223)](https://discord.gg/NTKdwUgK9p)
+
+## Overview
+
+The workbook templates that appear in the SheetXL **New Workbook** gallery. The repo is published to
+npm as [`@sheetxl/workbook-templates`](https://www.npmjs.com/package/@sheetxl/workbook-templates),
+and the SheetXL studio reads the catalog straight from unpkg:
+
+```text
+https://unpkg.com/@sheetxl/workbook-templates/dist/workbook-templates/contents.json
+```
+
+Every template is original content, dedicated to the public domain under [CC0 1.0](LICENSE). Use
+them however you like.
+
+## Adding a template
+
+Drop an `.xlsx` into a category folder under `templates/` and open a pull request. That is all. CI
+validates the workbook, builds the index and publishes it.
+
+- **The file name is the title.** `yearly-calendar.xlsx` is shown as "Yearly Calendar". Use
+  lowercase-kebab-case names.
+- **The folder is the category.** Use an existing folder, or create a new one. There is one level
+  only; an `.xlsx` directly in `templates/` fails the build.
+- **Thumbnails come from CI.** You do not need to make one. CI opens each template in the pinned
+  SheetXL studio (`render/`) and photographs its first screen. A hand-made `<name>.png` beside the
+  template is used instead, for a template whose first screen is not its best.
+
+To check a template before you push, run `npm install` and `npm run build`. To see its thumbnail,
+run `npx playwright install chromium` once, then `npm run thumbnails` before the build; the images
+land in `.thumbnails/`.
+
+Templates must be your own work, or carry a license that allows redistribution under CC0. Do not
+submit Microsoft Office templates or close copies of them.
+
+## Layout
+
+```text
+templates/
+  <category>/
+    _category.json        optional: { "title", "description", "order", "icon" }
+    <name>.xlsx           a template
+    <name>.png            optional hand-made thumbnail
+config/thumbnails.ts      renders .thumbnails/<category>/<name>.webp for each template
+config/build.ts           validates every template, then writes dist/
+render/                   the page that renders one template for its thumbnail
+```
+
+A category folder's `_category.json` sets its display title, description, sort `order` and icon.
+Without one, the title comes from the folder name ("project-management" becomes "Project
+Management"). Categories sort by `order`, then by title. Templates sort by title within a category.
+
+The build writes:
+
+```text
+dist/contents.json                                root listing of every file and folder
+dist/workbook-templates/contents.json             the catalog
+dist/workbook-templates/<category>/<name>.xlsx
+dist/workbook-templates/<category>/<name>.webp    the rendered thumbnail, or a hand-made .png
+```
+
+The catalog looks like this. Entry paths are relative to `dist/workbook-templates/`.
+
+```jsonc
+{
+  "kind": "templates",
+  "package": "workbook-templates",
+  "meta": {
+    "schema": 1,
+    "categories": [{ "id": "finance", "title": "Finance", "description": "..." }]
+  },
+  "entries": [
+    { "path": "finance/loan-calculator.xlsx", "category": "finance", "title": "Loan Calculator" }
+  ]
+}
+```
+
+## What the build checks
+
+Each `.xlsx` must open in the SheetXL SDK and fully recalculate with no `#NAME?` in any cell. The
+build also fails on a template that contains any of:
+
+- SheetXL script modules;
+- a VBA project;
+- links to other workbooks;
+- `WEBSERVICE`, `FILTERXML`, `IMPORTDATA` or another function that fetches from the network;
+- a hyperlink that is not `https:`;
+- more than 2 MB.
+
+Any other file in a category folder, besides `_category.json` and thumbnails, also fails the build.
+
+## Publishing
+
+A push to `main` that changes `templates/` or `config/` builds the catalog, bumps the patch version,
+tags it, publishes to npm and creates a GitHub release. Put `[publish]` in the commit message to
+publish without a template change.
+
+## Additional Resources
+
+- **[Main GitHub](https://github.com/sheetxl)**
+- **[Discord](https://discord.gg/NTKdwUgK9p)**
+- **[Website](https://www.sheetxl.com)**
+- **[Developer Docs](https://www.sheetxl.com/docs)**
+
+## License
+
+The templates are dedicated to the public domain under [CC0 1.0 Universal](LICENSE).
