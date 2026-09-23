@@ -97,8 +97,9 @@ Any other file in a category folder, besides `_category.json` and thumbnails, al
 ## Publishing
 
 A push to `main` that changes `templates/` or `config/` builds the catalog, bumps the patch version,
-tags it, publishes to npm and creates a GitHub release. Put `[publish]` in the commit message to
-publish without a template change.
+tags it, publishes to npm and creates a GitHub release. To publish without a template change, run
+the workflow from the Actions tab (**Run workflow**), or put `[publish]` in the message of a commit
+that changes `render/`, `package.json` or the workflow.
 
 ## Additional Resources
 

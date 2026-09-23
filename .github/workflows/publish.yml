@@ -19,6 +19,8 @@ on:
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/publish.yml'
+  # Actions tab > Run workflow: publishes a new version even without template changes.
+  workflow_dispatch:
 
 jobs:
   build:
@@ -72,7 +74,7 @@ jobs:
           echo "Generated files validated"
 
   publish:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -125,7 +127,10 @@ jobs:
             exit 0
           fi
 
-          if [[ "${{ github.event.head_commit.message }}" == *"[publish]"* ]]; then
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "Manual publish requested"
+            SHOULD_PUBLISH=true
+          elif [[ "${{ github.event.head_commit.message }}" == *"[publish]"* ]]; then
             echo "Force publish requested in commit message"
             SHOULD_PUBLISH=true
           elif ! git diff --quiet "$LAST_TAG" HEAD -- templates/ config/; then
